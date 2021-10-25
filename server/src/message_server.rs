@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use actix::{Actor, Addr, Context, Handler, Message};
 use log::error;
+use shared::Command;
 
 use crate::session::{Session, SessionId, SessionMessage};
 
@@ -18,11 +19,11 @@ impl Message for DisconnectServer {
     type Result = ();
 }
 
-pub struct SendMessage {
+pub struct SendCommand {
     pub session_id: SessionId,
-    pub message: String
+    pub command: Command
 }
-impl Message for SendMessage {
+impl Message for SendCommand {
     type Result = ();
 }
 
@@ -58,12 +59,12 @@ impl Handler<DisconnectServer> for MessageServer {
     }
 }
 
-impl Handler<SendMessage> for MessageServer {
-    type Result = <SendMessage as Message>::Result;
+impl Handler<SendCommand> for MessageServer {
+    type Result = <SendCommand as Message>::Result;
 
-    fn handle(&mut self, msg: SendMessage, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: SendCommand, _: &mut Self::Context) -> Self::Result {
         if let Some(addr) = self.clients.get(&msg.session_id) {
-            addr.do_send(SessionMessage(msg.message));
+            addr.do_send(SessionMessage(serde_json::to_string(&msg.command).unwrap()));
         } else {
             error!("trying to send to unknown session, {}", msg.session_id);
         }

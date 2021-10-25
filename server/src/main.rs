@@ -2,14 +2,20 @@ use std::fmt::Display;
 
 use actix::{Actor, Addr};
 use actix_web::{
-    post,
-    get, middleware,
+    get, middleware, post,
     web::{self, Json},
     App, HttpServer, ResponseError, Result as ActixResult,
 };
-use message_server::MessageServer;
+use serde::Deserialize;
 
-use crate::{message_server::SendMessage, session::{Session, SessionId}, session_manager::{CreateSessionId, ListSessions, SessionManager}};
+use message_server::MessageServer;
+use shared::Command;
+
+use crate::{
+    message_server::SendCommand,
+    session::{Session, SessionId},
+    session_manager::{CreateSessionId, ListSessions, SessionManager},
+};
 
 mod message_server;
 mod session;
@@ -55,11 +61,23 @@ async fn sessions(req: web::HttpRequest) -> Result<Json<Vec<u64>>, Error> {
         .map(|sessions| Json(sessions))
 }
 
-#[post("/message/{id}/{message}")]
-async fn send_message(req: web::HttpRequest, paths: web::Path<(SessionId, String)>) -> Result<Json<()>, Error> {
+#[derive(Deserialize)]
+struct CommandQuery {
+    command: Command,
+}
+
+#[post("/message/{id}")]
+async fn send_message(
+    req: web::HttpRequest,
+    session_id: web::Path<SessionId>,
+    command: web::Query<CommandQuery>,
+) -> Result<Json<()>, Error> {
     let message_server = req.app_data::<Addr<MessageServer>>().unwrap();
     message_server
-        .send(SendMessage {session_id: paths.0, message: paths.1.clone()})
+        .send(SendCommand {
+            session_id: session_id.into_inner(),
+            command: command.into_inner().command,
+        })
         .await
         .map_err(|_| Error::Mailbox)?;
 

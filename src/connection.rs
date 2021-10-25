@@ -9,6 +9,7 @@ use actix_codec::Framed;
 use awc::error::{WsClientError, WsProtocolError};
 use awc::ws::{Codec, Frame, Message};
 use awc::{BoxedSocket, Client};
+use bytestring::ByteString;
 use futures::stream::SplitSink;
 use futures::StreamExt;
 use log::{error, info};
@@ -96,7 +97,9 @@ impl StreamHandler<Result<Frame, WsProtocolError>> for Connection {
                     }
                 }
                 Frame::Pong(_) => {}
-                Frame::Text(msg) => info!("receied the msg {:?}", msg),
+                Frame::Text(msg) => {
+                    info!("receied the msg {:?}", msg);
+                },
                 _ => {}
             }
         }
