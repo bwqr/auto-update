@@ -13,7 +13,7 @@ use shared::Command;
 
 use crate::{
     message_server::SendCommand,
-    session::{Session, SessionId},
+    session::Session,
     session_manager::{CreateSessionId, ListSessions, SessionManager},
 };
 
@@ -66,20 +66,22 @@ struct CommandQuery {
     command: Command,
 }
 
-#[post("/message/{id}")]
+#[post("/message")]
 async fn send_message(
     req: web::HttpRequest,
-    session_id: web::Path<SessionId>,
     command: web::Query<CommandQuery>,
 ) -> Result<Json<()>, Error> {
+    let command = command.into_inner().command;
+
     let message_server = req.app_data::<Addr<MessageServer>>().unwrap();
-    message_server
-        .send(SendCommand {
-            session_id: session_id.into_inner(),
-            command: command.into_inner().command,
-        })
-        .await
-        .map_err(|_| Error::Mailbox)?;
+
+    req.app_data::<Addr<SessionManager>>()
+            .unwrap()
+            .send(ListSessions)
+            .await
+            .map_err(|_| Error::Mailbox)?
+            .into_iter()
+            .for_each(|session| message_server.do_send(SendCommand {session_id: session, command: command.clone()}));
 
     Ok(Json(()))
 }

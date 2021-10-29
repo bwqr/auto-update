@@ -31,12 +31,16 @@ impl Actor for Worker {
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("worker is started");
         info!("thread id {:?}", std::thread::current().id());
+
         self.do_work(ctx);
     }
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> actix::Running {
-        info!("worker is being stopped");
-
+    fn stopping(&mut self, _: &mut Self::Context) -> actix::Running {
+        info!("stopping worker");
         actix::Running::Stop
+    }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        info!("worker is stopped");
     }
 }

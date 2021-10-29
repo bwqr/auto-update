@@ -14,10 +14,9 @@ fn main() {
 
     let sys = System::new();
 
-    let worker_arbiter = Arbiter::new();
-    let worker = Worker::start_in_arbiter(&worker_arbiter.handle(), |_| Worker::new());
+    Worker::start_in_arbiter(&Arbiter::new().handle(), |_| Worker::new());
 
-    Connection::start_in_arbiter(&Arbiter::new().handle(), |_| Connection::new(String::from("http://127.0.0.1:8080/ws"), worker_arbiter));
+    Connection::start_in_arbiter(&Arbiter::new().handle(), |_| Connection::new(String::from("http://127.0.0.1:8080/ws")));
 
     sys.run().unwrap();
 }
