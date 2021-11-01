@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use actix::{Actor, Addr};
+use actix_files::NamedFile;
 use actix_web::{
     get, middleware, post,
     web::{self, Json},
@@ -24,12 +25,14 @@ mod session_manager;
 #[derive(Debug)]
 enum Error {
     Mailbox,
+    IO(std::io::Error)
 }
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Mailbox => f.write_str("Mailbox"),
+            Error::IO(e) => f.write_fmt(format_args!("IO {:?}", e))
         }
     }
 }
@@ -76,14 +79,24 @@ async fn send_message(
     let message_server = req.app_data::<Addr<MessageServer>>().unwrap();
 
     req.app_data::<Addr<SessionManager>>()
-            .unwrap()
-            .send(ListSessions)
-            .await
-            .map_err(|_| Error::Mailbox)?
-            .into_iter()
-            .for_each(|session| message_server.do_send(SendCommand {session_id: session, command: command.clone()}));
+        .unwrap()
+        .send(ListSessions)
+        .await
+        .map_err(|_| Error::Mailbox)?
+        .into_iter()
+        .for_each(|session| {
+            message_server.do_send(SendCommand {
+                session_id: session,
+                command: command.clone(),
+            })
+        });
 
     Ok(Json(()))
+}
+
+#[get("app")]
+async fn fetch_app() -> Result<NamedFile, Error> {
+    NamedFile::open("storage/server/app").map_err(|e| Error::IO(e))
 }
 
 #[actix_web::main]
@@ -103,6 +116,7 @@ async fn main() -> std::io::Result<()> {
             .service(connect)
             .service(sessions)
             .service(send_message)
+            .service(fetch_app)
     })
     .bind("127.0.0.1:8080")?
     .run()

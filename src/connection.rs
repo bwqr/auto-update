@@ -2,8 +2,11 @@ use std::cmp::min;
 use std::time::Duration;
 
 use actix::io::{SinkWrite, WriteHandler};
-use actix::{Actor, ActorFutureExt, AsyncContext, Context, ContextFutureSpawner, StreamHandler, System, WrapFuture};
+use actix::{
+    Actor, ActorFutureExt, AsyncContext, Context, ContextFutureSpawner, StreamHandler, WrapFuture,
+};
 use actix_codec::Framed;
+use async_std::io::WriteExt;
 use awc::error::{WsClientError, WsProtocolError};
 use awc::ws::{Codec, Frame, Message};
 use awc::{BoxedSocket, Client};
@@ -27,6 +30,7 @@ pub struct Connection {
     sink: Option<Write>,
     url: String,
     timing_index: usize,
+    restarting: bool,
 }
 
 impl Connection {
@@ -35,6 +39,7 @@ impl Connection {
             sink: None,
             url,
             timing_index: 0,
+            restarting: false,
         }
     }
 
@@ -80,7 +85,62 @@ impl Connection {
             .spawn(ctx);
     }
 
-    fn handle_frame(&mut self, frame: Frame) -> Result<(), Error> {
+    async fn download_app() -> Result<(), String> {
+        let mut resp = awc::Client::new()
+            .get("http://127.0.0.1:8080/app")
+            .send()
+            .await
+            .map_err(|e| format!("failed to download, {:?}", e))?;
+
+        if resp.status() != 200 {
+            return Err(format!(
+                "server returned unsuccessful message, {:?}",
+                resp.body().await
+            ));
+        }
+
+        let mut file = async_std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open("storage/client/app")
+            .await
+            .map_err(|e| format!("failed to create app file, {:?}", e))?;
+
+        while let Some(chunk) = resp.next().await {
+            let bytes = chunk.map_err(|e| format!("malformed chunk, {:?}", e))?;
+
+            file.write_all(&bytes)
+                .await
+                .map_err(|e| format!("failed to write chunks into file, {:?}", e))?;
+        }
+
+        Ok(())
+    }
+
+    fn restart(&mut self, ctx: &mut <Self as Actor>::Context) {
+        self.restarting = true;
+
+        Self::download_app()
+            .into_actor(self)
+            .then(|res, act, _| {
+                match res {
+                    Ok(r) => info!("downloaded the new version, restarting to update, {:?}", r),
+                    Err(e) => {
+                        error!("failed to download new version, {:?}", e);
+                        act.restarting = false;
+                    }
+                }
+
+                async {}.into_actor(act)
+            })
+            .spawn(ctx);
+    }
+
+    fn handle_frame(
+        &mut self,
+        frame: Frame,
+        ctx: &mut <Self as Actor>::Context,
+    ) -> Result<(), Error> {
         match frame {
             Frame::Ping(msg) => {
                 if let Some(sink) = &mut self.sink {
@@ -95,8 +155,12 @@ impl Connection {
 
                 match command {
                     Command::Restart => {
-                        System::current().stop();
-                    },
+                        if self.restarting {
+                            info!("received restart message while restarting");
+                            return Ok(());
+                        }
+                        self.restart(ctx);
+                    }
                     Command::Dummy => info!("received dummy command"),
                 }
             }
@@ -115,17 +179,26 @@ impl Actor for Connection {
         info!("thread id {:?}", std::thread::current().id());
         self.try_connect(ctx);
     }
+
+    fn stopping(&mut self, _: &mut Self::Context) -> actix::Running {
+        info!("stopping connection");
+        actix::Running::Stop
+    }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        info!("connection is stopped");
+    }
 }
 
 impl StreamHandler<Result<Frame, WsProtocolError>> for Connection {
-    fn handle(&mut self, item: Result<Frame, WsProtocolError>, _: &mut Self::Context) {
+    fn handle(&mut self, item: Result<Frame, WsProtocolError>, ctx: &mut Self::Context) {
         match item {
             Ok(frame) => {
-                if let Err(e) = self.handle_frame(frame) {
+                if let Err(e) = self.handle_frame(frame, ctx) {
                     error!("failed to handle frame, {:?}", e);
                 }
-            },
-            Err(e) => error!("ws protocol error occured, {:?}", e)
+            }
+            Err(e) => error!("ws protocol error occured, {:?}", e),
         }
     }
 

@@ -19,7 +19,11 @@ impl Worker {
 
         self.iteration += 1;
 
-        info!("doing some work, will run in {} seconds, iteration {}", INTERVAL_TIME, self.iteration);
+        info!("doing some work");
+
+        std::thread::sleep(Duration::from_secs(10));
+
+        info!("work done, will run in {} seconds, iteration {}", INTERVAL_TIME, self.iteration);
 
         ctx.run_later(Duration::from_secs(INTERVAL_TIME), Self::do_work);
     }
