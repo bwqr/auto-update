@@ -1,4 +1,6 @@
 use actix::{Actor, Arbiter, System};
+use log::info;
+
 use connection::Connection;
 use worker::Worker;
 
@@ -7,10 +9,10 @@ mod worker;
 
 fn main() {
     std::env::set_var("RUST_LOG", "info");
-
     env_logger::init();
 
-    log::info!("main thread id {:?}", std::thread::current().id());
+    info!("app version 4");
+    info!("main thread id {:?}", std::thread::current().id());
 
     let sys = System::new();
 

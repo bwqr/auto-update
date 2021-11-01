@@ -1,10 +1,9 @@
 use std::cmp::min;
 use std::time::Duration;
+use std::os::unix::fs::PermissionsExt;
 
 use actix::io::{SinkWrite, WriteHandler};
-use actix::{
-    Actor, ActorFutureExt, AsyncContext, Context, ContextFutureSpawner, StreamHandler, WrapFuture,
-};
+use actix::{Actor, ActorFutureExt, AsyncContext, Context, ContextFutureSpawner, StreamHandler, System, WrapFuture};
 use actix_codec::Framed;
 use async_std::io::WriteExt;
 use awc::error::{WsClientError, WsProtocolError};
@@ -17,9 +16,9 @@ use shared::Command;
 
 type Write = SinkWrite<Message, SplitSink<Framed<BoxedSocket, Codec>, Message>>;
 
-const MAX_TIMING: usize = 5;
+const MAX_TIMING: usize = 4;
 
-const TIMINGS: [u8; MAX_TIMING] = [0, 2, 4, 6, 8];
+const TIMINGS: [u8; MAX_TIMING + 1] = [0, 2, 4, 6, 8];
 
 #[derive(Debug)]
 enum Error {
@@ -65,7 +64,7 @@ impl Connection {
                         act.timing_index = 0;
                     }
                     Err(e) => {
-                        act.timing_index = min(act.timing_index + 1, MAX_TIMING - 1);
+                        act.timing_index = min(act.timing_index + 1, MAX_TIMING);
 
                         error!("{:?}", e);
                         error!(
@@ -85,9 +84,10 @@ impl Connection {
             .spawn(ctx);
     }
 
-    async fn download_app() -> Result<(), String> {
+    async fn download_file(url: &'static str, file_path: &'static str) -> Result<(), String> {
         let mut resp = awc::Client::new()
-            .get("http://127.0.0.1:8080/app")
+            .get(url)
+            .timeout(Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| format!("failed to download, {:?}", e))?;
@@ -99,12 +99,19 @@ impl Connection {
             ));
         }
 
-        let mut file = async_std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open("storage/client/app")
+        let mut file = async_std::fs::File::create(file_path)
             .await
-            .map_err(|e| format!("failed to create app file, {:?}", e))?;
+            .map_err(|e| format!("failed to create file, {:?}", e))?;
+
+        let mut perms = file.metadata()
+            .await
+            .map_err(|e| format!("failed to read metadata of file, {:?}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+
+        file.set_permissions(perms)
+            .await
+            .map_err(|e| format!("failed to set permission of file, {:?}", e))?;
 
         while let Some(chunk) = resp.next().await {
             let bytes = chunk.map_err(|e| format!("malformed chunk, {:?}", e))?;
@@ -120,15 +127,38 @@ impl Connection {
     fn restart(&mut self, ctx: &mut <Self as Actor>::Context) {
         self.restarting = true;
 
-        Self::download_app()
+        async {
+            if let Err(e) = Self::download_file("http://127.0.0.1:8080/updater", "storage/client/updater").await {
+                error!("failed to download updater, {:?}", e);
+                return false;
+            }
+            info!("downloaded the updater");
+
+            if let Err(e) = Self::download_file("http://127.0.0.1:8080/app", "storage/client/app").await {
+                error!("failed to download app, {:?}", e);
+                return false;
+            }
+            info!("downloaded the app");
+
+            return true;
+        }
             .into_actor(self)
             .then(|res, act, _| {
-                match res {
-                    Ok(r) => info!("downloaded the new version, restarting to update, {:?}", r),
-                    Err(e) => {
-                        error!("failed to download new version, {:?}", e);
-                        act.restarting = false;
-                    }
+                if res {
+                    info!("downloads are successful, restarting to update");
+
+                    let proc = std::process::Command::new("storage/client/updater")
+                        .spawn();
+
+                    match proc {
+                        Ok(_) => info!("spawned the updater"),
+                        Err(e) => error!("failed to spawn updater, {:?}", e)
+                    };
+
+                    System::current().stop();
+                    info!("stopped the system");
+                } else {
+                    act.restarting = false;
                 }
 
                 async {}.into_actor(act)
@@ -154,7 +184,7 @@ impl Connection {
                     serde_json::from_slice::<Command>(&msg).map_err(|_| Error::InvalidMessage)?;
 
                 match command {
-                    Command::Restart => {
+                    Command::Update => {
                         if self.restarting {
                             info!("received restart message while restarting");
                             return Ok(());

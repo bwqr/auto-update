@@ -99,6 +99,11 @@ async fn fetch_app() -> Result<NamedFile, Error> {
     NamedFile::open("storage/server/app").map_err(|e| Error::IO(e))
 }
 
+#[get("updater")]
+async fn fetch_updater() -> Result<NamedFile, Error> {
+    NamedFile::open("storage/server/updater").map_err(|e| Error::IO(e))
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "info");
@@ -117,6 +122,7 @@ async fn main() -> std::io::Result<()> {
             .service(sessions)
             .service(send_message)
             .service(fetch_app)
+            .service(fetch_updater)
     })
     .bind("127.0.0.1:8080")?
     .run()
