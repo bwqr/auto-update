@@ -1,5 +1,5 @@
 # Auto Update
-This project aims to create a program which listens messages from a server and takes actions with respect to these receied messages.
+This project aims to create a program which listens messages from a server and takes actions according to received messages.
 
 ## Expected workflow from program
 These are the steps that program should perform
